@@ -29,6 +29,15 @@ public class KeepAliveService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        // API 26+: foreground notification needs a registered channel or it's dropped
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                    CHANNEL_ID, "Digital Wellbeing status",
+                    android.app.NotificationManager.IMPORTANCE_MIN);
+            ch.setDescription("Keeps the monitor alive on Android 14+");
+            ch.setShowBadge(false);
+            getSystemService(android.app.NotificationManager.class).createNotificationChannel(ch);
+        }
         android.app.Notification notification = new android.app.Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("Digital Wellbeing")

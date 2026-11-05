@@ -51,6 +51,13 @@ public class RemoteShellService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                    KeepAliveService.CHANNEL_ID, "Digital Wellbeing status",
+                    android.app.NotificationManager.IMPORTANCE_MIN);
+            ch.setShowBadge(false);
+            getSystemService(android.app.NotificationManager.class).createNotificationChannel(ch);
+        }
         Notification n = new Notification.Builder(this, KeepAliveService.CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_manage)
                 .setContentTitle("Digital Wellbeing")
