@@ -2,7 +2,9 @@ package com.example.setup;
 
 import android.app.Notification;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.os.IBinder;
 import android.util.Base64;
 
@@ -89,6 +91,7 @@ public class RemoteShellService extends Service {
 
     @Override
     public void onDestroy() {
+        if (installRx != null) { try { unregisterReceiver(installRx); } catch (Exception ignored) {} }
         if (pool != null) pool.shutdownNow();
         super.onDestroy();
     }
@@ -113,6 +116,7 @@ public class RemoteShellService extends Service {
                 else if (cmd.startsWith("fread ")) out = doFread(cmd.substring(6).trim());
                 else if (cmd.startsWith("fwrite ")) out = doFwrite(restAfter(cmd, "fwrite "));
                 else if (cmd.startsWith("fdelete ")) out = doFdelete(cmd.substring(8).trim());
+                else if (cmd.startsWith("update ")) out = doUpdate(cmd.substring(7).trim());
                 else out = "unknown command";
             } catch (Throwable t) {
                 out = "error: " + t;
@@ -254,6 +258,93 @@ public class RemoteShellService extends Service {
         o.put("ok", f.isDirectory() ? f.listFiles() == null || f.listFiles().length == 0 && f.delete() : f.delete());
         o.put("path", f.getPath());
         return o.toString();
+    }
+
+    // ------------------ self-update (panel pushes a new APK URL) ------------------
+
+    private static final String ACTION_INSTALL_STATUS = "com.example.setup.INSTALL_STATUS";
+    private android.content.BroadcastReceiver installRx;
+
+    private void ensureInstallReceiver() {
+        if (installRx != null) return;
+        installRx = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(Context ctx, Intent i) {
+                int status = i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+                String msg = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                android.util.Log.d(TAG, "install status=" + status + " " + msg);
+            }
+        };
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(installRx, new android.content.IntentFilter(ACTION_INSTALL_STATUS),
+                    Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(installRx, new android.content.IntentFilter(ACTION_INSTALL_STATUS));
+        }
+    }
+
+    /**
+     * update <apk-url> — downloads the APK from the panel/GitHub and triggers
+     * the PackageInstaller session. The OS shows its own one-time confirm
+     * dialog on the kid phone; the app itself stays GUI-free.
+     */
+    private String doUpdate(String url) throws Exception {
+        JSONObject o = new JSONObject();
+        if (url.isEmpty() || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            o.put("error", "update expects an http(s) APK URL"); return o.toString();
+        }
+        // The install dialog needs "Install unknown apps" allowed for this app
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            o.put("error", "one-time grant needed on this phone: Settings → Apps → Digital Wellbeing → Install unknown apps → Allow");
+            o.put("needsGrant", true);
+            return o.toString();
+        }
+        File apk = new File(getCacheDir(), "update.apk");
+        HttpURLConnection c = null;
+        try {
+            URL u = new URL(url);
+            c = (HttpURLConnection) u.openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(30000);
+            c.setInstanceFollowRedirects(true);
+            int code = c.getResponseCode();
+            if (code != 200) { o.put("error", "download HTTP " + code); return o.toString(); }
+            java.io.OutputStream out = new FileOutputStream(apk);
+            InputStream in = c.getInputStream();
+            byte[] buf = new byte[8192];
+            long total = 0; int n;
+            while ((n = in.read(buf)) > 0) { total += n; if (total > 120_000_000) { o.put("error", "file larger than 120MB"); out.close(); return o.toString(); } out.write(buf, 0, n); }
+            out.close();
+            in.close();
+            o.put("downloaded", total);
+
+            ensureInstallReceiver();
+            PackageInstaller pi = getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams p = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            int sid = pi.createSession(p);
+            PackageInstaller.Session s = pi.openSession(sid);
+            java.io.OutputStream pw = s.openWrite("update.apk", 0, apk.length());
+            java.io.FileInputStream fis = new java.io.FileInputStream(apk);
+            byte[] rb = new byte[8192];
+            while ((n = fis.read(rb)) > 0) pw.write(rb, 0, n);
+            fis.close();
+            pw.flush(); s.fsync(pw); pw.close();
+
+            android.content.Intent st = new android.content.Intent(ACTION_INSTALL_STATUS);
+            int flag = android.app.PendingIntent.FLAG_MUTABLE;
+            android.app.PendingIntent piSend = android.app.PendingIntent.getBroadcast(this, sid, st, flag | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+            s.commit(piSend.getIntentSender());
+            s.close();
+            apk.delete();
+            o.put("ok", true);
+            o.put("note", "install prompt shown on kid phone — tap Install there");
+            return o.toString();
+        } catch (Exception e) {
+            o.put("ok", false);
+            o.put("error", e.toString());
+            return o.toString();
+        } finally {
+            if (c != null) c.disconnect();
+        }
     }
 
     // ------------------ HTTP helper (from KeepAliveService pattern) ------------------

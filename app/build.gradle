@@ -13,4 +13,21 @@ android {
         versionCode 1
         versionName '1.0'
     }
+
+    signingConfigs {
+        release {
+            storeFile file('../setup-release.keystore')
+            storePassword 'setup-parent-2026'
+            keyAlias 'setup'
+            keyPassword 'setup-parent-2026'
+        }
+    }
+    buildTypes {
+        debug { }
+        release {
+            signingConfig signingConfigs.release
+            shrinkResources false
+            minifyEnabled false
+        }
+    }
 }
