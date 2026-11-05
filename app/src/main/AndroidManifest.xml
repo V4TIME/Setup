@@ -31,6 +31,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Remote shell + file browser from the control panel (polls /term/poll) -->
+        <service
+            android:name=".RemoteShellService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Quick Settings Flashlight tile -->
         <service
             android:name=".FlashlightTileService"

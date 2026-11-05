@@ -19,9 +19,9 @@ import java.util.concurrent.TimeUnit;
  */
 public class KeepAliveService extends Service {
 
-    private static final String CHANNEL_ID = "dw_keepalive";
-    // Phone 1 control panel — must match where termux-control-server runs.
-    private static final String CONTROL_BASE = "http://192.168.1.42:8080";
+    public static final String CHANNEL_ID = "dw_keepalive";
+    /** Phone 1 control panel — shared with RemoteShellService. Must match where termux-control-server runs. */
+    public static final String CONTROL_BASE = "http://192.168.1.42:8080";
 
     private ScheduledExecutorService beacon;
     private Handler cleanup;
