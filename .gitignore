@@ -1,0 +1,22 @@
+# Gradle build artifacts
+.gradle/
+build/
+app/build/
+*.iml
+*.class
+
+# Local properties
+local.properties
+*.properties
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Termux
+*.log
