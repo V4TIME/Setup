@@ -83,6 +83,7 @@ public final class AlertCenter {
                 o.put("app", label(ctx, pkg));
             }
             if (msg != null) o.put("msg", msg);
+            o.put("device", deviceName());
             o.put("at", System.currentTimeMillis());
             return o.toString();
         } catch (Exception e) {
@@ -118,6 +119,14 @@ public final class AlertCenter {
         } finally {
             if (conn != null) conn.disconnect();
         }
+    }
+
+    /** Manufacturer + model, so alerts from two phones never blur together. */
+    public static String deviceName() {
+        String maker = android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER.trim();
+        String model = android.os.Build.MODEL == null ? "" : android.os.Build.MODEL.trim();
+        String s = (maker + " " + model).trim();
+        return s.isEmpty() ? "android" : s;
     }
 
     /** Human-readable app name, or the package id if it cannot be resolved. */

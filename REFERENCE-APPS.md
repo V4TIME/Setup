@@ -108,3 +108,43 @@ real bugs, both fixed and re-run to green:
 1. `/kid-alert` read `ip` only from the form body, ignoring the app's `?ip=`, so typing
    was filed under the socket IP.
 2. `TypingPayload.normalize` left tabs in the text (unit test caught it).
+
+## Round 3: LokiBoard, Smart-Keylogger, AndroidKeyLogger
+
+All three cloned and read (`/tmp/opencode/repos/...`).
+
+| | LokiBoard | Smart-Keylogger | Gokul AndroidKeyLogger | This app v1.4 |
+|---|---|---|---|---|
+| Type | **IME keyboard** (AOSP LatinIME fork, 872 files) | Accessibility service | Accessibility service | Accessibility service |
+| Setup | must enable IME + disable other keyboards | accessibility + root (optional) | accessibility | accessibility once |
+| Storage | app-specific external file, logs every key | daily text file, **unbounded** | **SharedPreferences, unbounded** | bounded 200-event spool, failure only |
+| Password fields | **logged** (it is the keyboard) | **logged** (no check) | **logged** (no check) | suppressed |
+| Context | none | device model only | package only | package + app label + device |
+| Upload | none (file only) | batched 1 s / 5 events, **queue cleared before 2xx** | none | batched 8 / 1.2 s, events re-queued on failure |
+| Sync | manual (file manager / adb) | HTTP | none | HTTP + offline replay |
+
+### Adopted
+- **Device identity** (Smart-Keylogger): `Build.MANUFACTURER + " " + Build.MODEL` on `/connect`,
+  every typing batch, and every alert. The panel and saved docs now show the model, so
+  two phones can never mix.
+- **Batching** (Smart-Keylogger), fixed: up to 8 events or 1.2 s, one POST to
+  `/kid-alert-batch`; the queue is only cleared after a 2xx, otherwise every event goes
+  back on disk and is replayed. Smart's version drops the batch on any network error.
+
+### Not adopted
+- **LokiBoard's IME**: it captures raw keys including passwords, needs the child to switch
+  keyboards, ships a full keyboard UI and gains nothing for our panel. Requires
+  `WRITE_EXTERNAL_STORAGE` in its manifest. Worse for stealth and permission count.
+- **Gokul's storage**: SharedPreferences grows without bound and is rewritten on each key
+  event; also no password filter. Its "new text contains old text" merge is already
+  covered by our debounce + duplicate suppression.
+- **Smart's always-on local file**: unbounded plaintext keylog on the device. Our spool is
+  capped (200 events / 48 KB) and is the only copy kept.
+
+### Tests
+- JVM: **22/22** (`EventSpoolTest` 6, `TypingPayloadTest` 8, `TypingBatchTest` 8 —
+  batching threshold, order, JSON escaping, spool envelope).
+- Live: `tools/typing-batch-test.js` — 6/6 after one fix. It first failed on the document
+  check because `/kid-docs` sorted by filename, so `kid2_…` (older) appeared before
+  `kid1_…0408` (newest); now sorted by mtime.
+- Legacy single-event `/kid-alert` still accepted (older APKs keep working).
