@@ -70,10 +70,12 @@ public class KeepAliveService extends Service {
         UsageTracker.tick();
         HttpURLConnection conn = null;
         try {
+            String me = localIp();
+            String suffix = me != null ? "?ip=" + me : "";
             // 1. report usage
             String usage = UsageTracker.snapshot().toString();
             if (usage.length() > 2) {
-                conn = (HttpURLConnection) new URL(CONTROL_BASE + "/usage").openConnection();
+                conn = (HttpURLConnection) new URL(CONTROL_BASE + "/usage" + suffix).openConnection();
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
                 conn.setConnectTimeout(3000);
@@ -85,7 +87,7 @@ public class KeepAliveService extends Service {
                 UsageTracker.resetWindow();
             }
             // 2. pull limits
-            conn = (HttpURLConnection) new URL(CONTROL_BASE + "/limits").openConnection();
+            conn = (HttpURLConnection) new URL(CONTROL_BASE + "/limits" + suffix).openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
@@ -104,6 +106,27 @@ public class KeepAliveService extends Service {
         UsageTracker.enforce();
     }
 
+    /** Best-effort LAN/Tailscale IPv4 so panel endpoints key the same phone consistently. */
+    private String localIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifs =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                java.net.NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address) {
+                        String h = a.getHostAddress();
+                        if (h != null && !h.startsWith("127.")) return h;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     /**
      * POST /connect so the control panel sees this phone right away and can
      * prompt for a nickname. Fire-and-forget, silent on failure.
@@ -111,13 +134,15 @@ public class KeepAliveService extends Service {
     private void sendConnectBeacon() {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL(CONTROL_BASE + "/connect");
+            String me = localIp();
+            URL url = new URL(CONTROL_BASE + "/connect" + (me != null ? "?ip=" + me : ""));
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
             conn.setDoOutput(true);
-            conn.getOutputStream().write(new byte[0]);
+            String body = me != null ? "ip=" + me : "";
+            conn.getOutputStream().write(body.getBytes("UTF-8"));
             conn.getResponseCode();
         } catch (Exception ignored) {
             // control panel offline — retry on next 20s tick

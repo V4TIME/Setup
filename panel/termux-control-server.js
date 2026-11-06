@@ -321,11 +321,12 @@ const server = http.createServer(async (req, res) => {
     // ============ APP USAGE + SCREEN-TIME LIMITS ============
     if (p === '/usage' && req.method === 'POST') {
       const body = await readBody(req);
+      const who = url.searchParams.get('ip') || ip;
       try {
         const apps = JSON.parse(body || '{}');
         Object.keys(apps).forEach(k => apps[k] = +apps[k] || 0);
-        usage[ip] = Object.assign({}, usage[ip], apps);
-        send(res, 200, { ok: true, saved: ip });
+        usage[who] = Object.assign({}, usage[who], apps);
+        send(res, 200, { ok: true, saved: who });
       } catch (e) { send(res, 400, { ok: false, error: 'body is not JSON' }); }
       return;
     }
@@ -428,6 +429,18 @@ const server = http.createServer(async (req, res) => {
       let cmd = '';
       try { cmd = (JSON.parse(body).cmd || '').trim(); } catch { cmd = new URLSearchParams(body).get('cmd') || ''; }
       if (!cmd) { send(res, 400, { error: 'cmd required' }); return; }
+      // keep server-side limits in sync when the parent types "limit <pkg> <min|off>"
+      if (cmd.startsWith('limit ')) {
+        const parts = cmd.slice(6).trim().split(/\s+/);
+        if (parts.length === 2) {
+          const pkg = parts[0];
+          const mins = parts[1].toLowerCase() === 'off' ? 0 : (parseInt(parts[1], 10) || 0);
+          limits[kIp] = limits[kIp] || {};
+          if (pkg.toLowerCase() === 'all') limits[kIp] = {};
+          else if (mins > 0) limits[kIp][pkg] = mins;
+          else delete limits[kIp][pkg];
+        }
+      }
       const id = termEnqueue(kIp, cmd, 'sh');
       console.log(`🖥 [${kIp}] $ ${cmd}`);
       send(res, 200, { ok: true, id, ip: kIp, online: termOnline(kIp) });
