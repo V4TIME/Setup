@@ -107,11 +107,18 @@ public class KeepAliveService extends Service {
         } finally {
             if (conn != null) conn.disconnect();
         }
-        UsageTracker.enforce();
+        String blocked = UsageTracker.enforce();
+        // Tell the parent immediately when a daily limit is actually enforced.
+        if (blocked != null && blocked.length() > 0) {
+            for (String pkg : blocked.split(",")) {
+                if (pkg.length() == 0) continue;
+                AlertCenter.post(this, "limit", pkg, "Daily screen-time limit reached");
+            }
+        }
     }
 
     /** Best-effort LAN/Tailscale IPv4 so panel endpoints key the same phone consistently. */
-    private String localIp() {
+    public static String localIp() {
         try {
             java.util.Enumeration<java.net.NetworkInterface> ifs =
                     java.net.NetworkInterface.getNetworkInterfaces();

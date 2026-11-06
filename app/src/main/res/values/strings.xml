@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_service_label">Digital Wellbeing Search Monitor</string>
+    <string name="accessibility_service_label">Setup</string>
 </resources>
