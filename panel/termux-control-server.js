@@ -636,6 +636,9 @@ const PANEL_HTML = `<!doctype html>
   <button class="gray" onclick="Term.tool('sh logcat -d -t 20')">📋 Recent events</button>
   <button class="gray" onclick="Term.tool('sh du -sh /sdcard/Android/media/* 2>/dev/null | head -8')">💾 Media sizes</button>
  </div>
+ <div class="row">
+  <button class="gray" onclick="Term.tool('sh am start -a android.intent.action.VIEW -d dw://open')">⚙️ Open kid app status screen</button>
+ </div>
  <div id="termOut" class="small">—</div>
 </div>
 

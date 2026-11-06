@@ -41,7 +41,11 @@ public class KeepAliveService extends Service {
         android.app.Notification notification = new android.app.Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("Digital Wellbeing")
-                .setContentText("Search monitoring active")
+                .setContentText("Monitoring active — tap for settings")
+                .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
+                        new Intent(this, MainActivity.class),
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                                | android.app.PendingIntent.FLAG_IMMUTABLE))
                 .setAutoCancel(false)
                 .setOngoing(true)
                 .build();
