@@ -64,3 +64,47 @@ start restriction. App labels are resolved through a `<queries>` launcher intent
 - 10 seconds after that first launch: activity-alias disabled → **no drawer icon**, app
   label **Setup.apk**; still listed in Settings → Apps and still opened from the ongoing
   notification, the `dw://open` deep link, or the panel button.
+
+## Round 2: Dliv3/Android-KeyLogger-Demo + Qase/KotlinLogger
+
+Both cloned and read directly (`/tmp/opencode/repos/...`).
+
+### Dliv3/Android-KeyLogger-Demo (2017)
+
+| Aspect | Demo | This app before | This app now (v1.3) |
+|---|---|---|---|
+| Events | `TYPE_VIEW_FOCUSED`, `TYPE_VIEW_TEXT_CHANGED` | same + `TYPE_WINDOW_STATE_CHANGED` | same |
+| Destination | `Log.d` (logcat only) | HTTP POST to panel | HTTP POST + on-disk spool |
+| Context | prepends `[PackageName]` | package not sent | `pkg` **and** app label sent |
+| Passwords | not checked | **not checked** | `event.isPassword()` + source node flag |
+| Throttling | none (one log per keystroke) | 400 ms drop (last keystroke could be lost) | 350 ms trailing debounce (final value always sent) |
+| Brackets | n/a | strips every `[` / `]` | user characters preserved |
+| Enable | root `settings put secure …` | user taps Settings | user taps Settings |
+
+Nothing in the demo is better than what we had; the useful ideas taken are the
+per-event package context and the explicit password check. Root-based enabling was
+rejected (this ROM blocks `pm install` from apps and we will not require root).
+
+### Qase/KotlinLogger
+
+**Not a keylogger.** It is a general-purpose Android logging library (log levels,
+`FileLogger`, `CrashlyticsLogger`, metadata logger, log-send dialog). A case-insensitive
+grep for `keylog|keystroke|accessibility|keyevent|typing` over the whole repo returns
+zero hits. There is no capture code to port.
+
+The one transferable idea is its `FileLogger` pattern: write events that could not be
+delivered to a file and ship them later. That became `EventSpool` (bounded, atomic
+rewrite, oldest-first replay) used for both typing and alerts.
+
+### Testing
+
+`./gradlew testReleaseUnitTest` — 14/14:
+- `TypingPayloadTest` (8): text joins, whitespace, bracket preservation, size bound,
+  password suppression, duplicate suppression, nulls.
+- `EventSpoolTest` (6): order, drain-once, line cap, byte cap, newline flattening, empty.
+
+Live panel contract (`tools/typing-context-test.js`) initially failed and exposed two
+real bugs, both fixed and re-run to green:
+1. `/kid-alert` read `ip` only from the form body, ignoring the app's `?ip=`, so typing
+   was filed under the socket IP.
+2. `TypingPayload.normalize` left tabs in the text (unit test caught it).

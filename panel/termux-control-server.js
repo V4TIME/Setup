@@ -63,7 +63,7 @@ function flushKidDocuments(force = false) {
       `# ${name} — ${ip}`,
       `# ${new Date(now).toISOString()} (${kid.buffer.length} entries)`,
       '',
-      ...kid.buffer.map(e => `- [${e.time}] ${e.text}`),
+      ...kid.buffer.map(e => `- [${e.time}]${e.app ? ' [' + e.app + ']' : ''} ${e.text}`),
       ''
     ];
     fs.writeFileSync(file, lines.join('\n'));
@@ -167,14 +167,19 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const params = new URLSearchParams(body);
       const query = params.get('query');
-      const srcIP = params.get('ip') || ip;
+      // the app identifies itself with ?ip= (consistent with /usage, /alert)
+      const srcIP = params.get('ip') || url.searchParams.get('ip') || ip;
+      const pkg = params.get('pkg') || null;
+      const app = params.get('app') || null;
       if (query) {
         const t = new Date().toISOString();
         const kid = ensureKid(srcIP);
         kid.lastQuery = query;
-        kid.buffer.push({ time: t, text: query });
-        fs.appendFileSync(LOG_FILE, `[${t}] ${srcIP}: ${query}\n`);
-        console.log(`🔍 [${srcIP}] "${query}"`);
+        kid.lastPkg = pkg;
+        kid.lastApp = app;
+        kid.buffer.push({ time: t, text: query, pkg, app });
+        fs.appendFileSync(LOG_FILE, `[${t}] ${srcIP}${app ? ' (' + app + ')' : ''}: ${query}\n`);
+        console.log(`🔍 [${srcIP}]${app ? ' [' + app + ']' : ''} "${query}"`);
       }
       send(res, 200, { status: 'logged' });
       return;
@@ -189,9 +194,11 @@ const server = http.createServer(async (req, res) => {
           nickname: k.nickname || null,
           unassigned: !k.nickname,
           lastQuery: k.lastQuery || null,
+          lastApp: k.lastApp || null,
+          lastPkg: k.lastPkg || null,
           lastSeen: k.lastSeen,
           online: now - k.lastSeen < 90000, // saw something <90s ago
-          recent: k.buffer.slice(-20).map(e => ({ time: e.time, text: e.text })),
+          recent: k.buffer.slice(-20).map(e => ({ time: e.time, text: e.text, app: e.app || null, pkg: e.pkg || null })),
           docCount: k.docCount
         }));
       send(res, 200, { devices, generatedAt: now });
@@ -208,7 +215,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // manually flush 20-min documents now
-    if (p === '/kid-save' && req.method === 'POST') {
+    if (p === '/kid-save' && (req.method === 'POST' || req.method === 'GET')) {
       const saved = flushKidDocuments(true);
       send(res, 200, { saved, docsDir: DOCS_DIR });
       return;
@@ -756,10 +763,11 @@ async function loadKids(){
  const el=document.getElementById('kids');
  el.innerHTML=d.devices.map(k=>{
   const txt=(k.lastQuery||'')+'<span class="cursor"> </span>';
-  const recent=k.recent.map(e=>'<div class="small">['+e.time.slice(11,19)+'] '+e.text+'</div>').join('');
+  const tag=k.lastApp?' <span style="color:#8b949e">('+esc(k.lastApp)+')</span>':'';
+  const recent=k.recent.map(e=>'<div class="small">['+e.time.slice(11,19)+']'+(e.app?' <span style="color:#8b949e">['+esc(e.app)+']</span>':'')+' '+esc(e.text)+'</div>').join('');
   return '<div class="dev"><div class="row"><span class="badge '+(k.online?'':'off')+'">'+(k.nickname||'unassigned')+' — '+k.ip+'</span>'
    +(k.unassigned?'<button class="warn" onclick="setNick(\\''+k.ip+'\\')">Set nickname</button>':'')+'</div>'
-   +'<div id="typing">'+(k.lastQuery?txt:'(nothing typed yet)')+'</div><div>'+recent+'</div></div>';
+   +'<div id="typing">'+(k.lastQuery?esc(k.lastQuery)+tag+'<span class="cursor"> </span>':'(nothing typed yet)')+'</div><div>'+recent+'</div></div>';
  }).join('')||'<div class="small">No phones have connected yet. Install the APK on the 2nd phone.</div>';
 }
 const Files = {

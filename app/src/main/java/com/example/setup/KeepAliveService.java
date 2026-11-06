@@ -72,6 +72,8 @@ public class KeepAliveService extends Service {
     private void usageCycle() {
         UsageTracker.initFromPrefs(this);
         UsageTracker.tick();
+        // replay alerts queued while the panel was unreachable
+        AlertCenter.flush(this);
         HttpURLConnection conn = null;
         try {
             String me = localIp();
