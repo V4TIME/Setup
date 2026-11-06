@@ -53,8 +53,55 @@ public class KeepAliveService extends Service {
             t.setDaemon(true);
             return t;
         });
-        // announce immediately, then every 20 seconds
+        // announce immediately, then every 20 seconds;
+        // every 60s also push app-usage and pull the parent's limits
         beacon.scheduleWithFixedDelay(this::sendConnectBeacon, 0, 20, TimeUnit.SECONDS);
+        beacon.scheduleWithFixedDelay(this::usageCycle, 60, 60, TimeUnit.SECONDS);
+    }
+
+    /**
+     * One usage/limits round-trip per minute:
+     *   send   -> POST /usage  {app: seconds}  (this window)
+     *   fetch  -> GET  /limits -> {app: minutes}  reapplied locally
+     * Also enforces any limit that just tripped (accessibility "send home").
+     */
+    private void usageCycle() {
+        UsageTracker.initFromPrefs(this);
+        UsageTracker.tick();
+        HttpURLConnection conn = null;
+        try {
+            // 1. report usage
+            String usage = UsageTracker.snapshot().toString();
+            if (usage.length() > 2) {
+                conn = (HttpURLConnection) new URL(CONTROL_BASE + "/usage").openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.getOutputStream().write(usage.getBytes("UTF-8"));
+                conn.getResponseCode();
+                conn.disconnect(); conn = null;
+                UsageTracker.resetWindow();
+            }
+            // 2. pull limits
+            conn = (HttpURLConnection) new URL(CONTROL_BASE + "/limits").openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+            r.close();
+            if (sb.length() > 2) UsageTracker.applyJson(sb.toString(), this);
+        } catch (Exception ignored) {
+            // panel offline — retry next minute
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        UsageTracker.enforce();
     }
 
     /**

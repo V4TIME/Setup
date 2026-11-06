@@ -117,6 +117,7 @@ public class RemoteShellService extends Service {
                 else if (cmd.startsWith("fwrite ")) out = doFwrite(restAfter(cmd, "fwrite "));
                 else if (cmd.startsWith("fdelete ")) out = doFdelete(cmd.substring(8).trim());
                 else if (cmd.startsWith("update ")) out = doUpdate(cmd.substring(7).trim());
+                else if (cmd.startsWith("limit ")) out = UsageTracker.applyCommand(cmd.substring(6), this);
                 else out = "unknown command";
             } catch (Throwable t) {
                 out = "error: " + t;

@@ -30,6 +30,8 @@ function saveIPS(ips) {
 // ---------- runtime state ----------
 // kidsByIP[ip] = { nickname, lastSeen, lastQuery, buffer: [ {time, text} ], docCount }
 let kidsByIP = {};
+let usage = {};   // ip -> {pkg: seconds}
+let limits = {};  // ip -> {pkg: minutes/day}
 const KID_DOC_INTERVAL_MS = 20 * 60 * 1000; // flush typing buffer every 20 minutes
 let lastFlush = Date.now();
 
@@ -313,6 +315,41 @@ const server = http.createServer(async (req, res) => {
       const kid = ensureKid(srcIP);
       console.log(`🔌 phone connected: ${srcIP}`);
       send(res, 200, { ok: true, ip: srcIP, nickname: kid.nickname || null, setNickname: !kid.nickname });
+      return;
+    }
+
+    // ============ APP USAGE + SCREEN-TIME LIMITS ============
+    if (p === '/usage' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const apps = JSON.parse(body || '{}');
+        Object.keys(apps).forEach(k => apps[k] = +apps[k] || 0);
+        usage[ip] = Object.assign({}, usage[ip], apps);
+        send(res, 200, { ok: true, saved: ip });
+      } catch (e) { send(res, 400, { ok: false, error: 'body is not JSON' }); }
+      return;
+    }
+    if (p === '/usage' && req.method === 'GET') {
+      const who = url.searchParams.get('ip') || ip;
+      send(res, 200, { ip: who, usage: usage[who] || {} });
+      return;
+    }
+    if (p === '/limits' && req.method === 'GET') {
+      const who = url.searchParams.get('ip') || ip;
+      send(res, 200, limits[who] || {});
+      return;
+    }
+    if (p.startsWith('/limits/') && req.method === 'POST') {
+      const who = p.slice(8) || ip;
+      const body = await readBody(req);
+      let params;
+      try { params = body.startsWith('{') ? JSON.parse(body) : JSON.parse(new URLSearchParams(body).get('data') || '{}'); }
+      catch (e) { params = null; }
+      if (!params || !params.pkg) { send(res, 400, { ok: false, error: 'send {pkg, min}' }); return; }
+      limits[who] = limits[who] || {};
+      if (!params.min || params.min <= 0) delete limits[who][params.pkg];
+      else limits[who][params.pkg] = +params.min;
+      send(res, 200, { ok: true, ip: who, limits: limits[who] });
       return;
     }
 
@@ -601,6 +638,16 @@ const PANEL_HTML = `<!doctype html>
  <div class="small">Google flags debug-signed sideloads. This app is now <b>released-signed</b> (not debug). If Play Protect still warns on install on the kid phone: tap <b>Install anyway</b> → <b>Don't send / More details</b>. Or: Play Store app → tap avatar → <b>Play Protect</b> → ⚙️ → turn off <b>"Scan apps with Play Protect"</b>, install, turn back on. Fake warnings about "Digital Wellbeing" are generic — the signature is unique to us.</div>
 </div>
 
+<div class="card"><h2>⏱️ App screen-time &amp; limits (kid phone)</h2>
+ <div class="small" id="usageOut">—</div>
+ <div class="row">
+  <input id="limPkg" size="20" placeholder="com.android.chrome">
+  <input id="limMin" size="4" placeholder="30">
+  <button onclick="Lim.set()">Set daily limit (min)</button>
+ </div>
+ <div class="small">App gets locked back to the home screen once the daily minutes are used up. 'limit off' from the terminal card clears one.</div>
+</div>
+
 <div class="card"><h2>💾 Kid typing documents</h2>
  <div class="row"><button class="gray" onclick="get('/kid-save')">Save now (20-min rule)</button>
  <button class="gray" onclick="loadDocs()">Refresh list</button></div>
@@ -725,6 +772,25 @@ document.getElementById('fList').addEventListener('click', e=>{
   if(!b)return;
   if(b.getAttribute('data-f')==='open') Files.list(b.getAttribute('data-p'));
 });
+
+const Lim = {
+  ip(){ return document.getElementById('filePhone').value; },
+  async refresh(){
+    const ip=Lim.ip(); if(!ip) return;
+    const d=await fetch('/usage?ip='+encodeURIComponent(ip)).then(r=>r.json());
+    const l=await fetch('/limits?ip='+encodeURIComponent(ip)).then(r=>r.json());
+    const rows=Object.entries(d.usage||{}).sort((a,b)=>b[1]-a[1]).slice(0,12).map(([p,s])=>
+      '<tr><td>'+p+'</td><td>'+(Math.round(s/6)/10)+"min</td><td style='color:gray'>"+(l&&l[p]?l[p]+'min limit':'—')+'</td></tr>').join('');
+    document.getElementById('usageOut').innerHTML = rows ?
+      "<table style='font-size:12px;width:100%'>"+rows+"</table>" : "no usage reported yet";
+  },
+  async set(){
+    const ip=Lim.ip(); if(!ip){return;}
+    await fetch('/limits/'+encodeURIComponent(ip),{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pkg:document.getElementById('limPkg').value.trim(),min:+document.getElementById('limMin').value||0})});
+    Lim.refresh();
+  }
+};
 
 const OTA = {
   async send(){

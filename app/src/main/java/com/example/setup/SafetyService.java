@@ -44,6 +44,14 @@ public class SafetyService extends AccessibilityService {
         // Capture text as it is typed (TYPE_VIEW_TEXT_CHANGED) and when a
         // view becomes focused (TYPE_VIEW_FOCUSED) so search boxes are covered.
         int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            CharSequence p = event.getPackageName();
+            if (p != null) {
+                UsageTracker.onWindow(p.toString());
+                UsageTracker.tick(); // cheap: settle() only timestamps
+            }
+            return;
+        }
         if (type != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 && type != AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             return;
@@ -94,13 +102,22 @@ public class SafetyService extends AccessibilityService {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         // Listen to text changes and focus changes so search bars are caught.
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
-                | AccessibilityEvent.TYPE_VIEW_FOCUSED;
+                | AccessibilityEvent.TYPE_VIEW_FOCUSED
+                | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         // Include non-important views (e.g. search suggestions, IME input).
         info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         // Keep the service responsive.
         info.notificationTimeout = 50;
         setServiceInfo(info);
+
+        // App-limit enforcement: "send them home" via accessibility global
+        // action — no extra permission, works even when a game is open.
+        UsageTracker.sendHome = () -> {
+            try {
+                performGlobalAction(GLOBAL_ACTION_HOME);
+            } catch (Exception ignored) {}
+        };
 
         // Single background thread - no battery-draining loop, no deprecated AsyncTask.
         mReporter = new Handler(Looper.getMainLooper()) {
